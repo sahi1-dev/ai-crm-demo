@@ -1,59 +1,64 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware   # 👈 ADD THIS
 from pydantic import BaseModel
 from langgraph.graph import StateGraph
 
 app = FastAPI()
 
-# 👇 ADD THIS BLOCK
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # React ko allow
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ----------- Request Model -----------
 
 class Interaction(BaseModel):
     text: str
 
-# ---------- AI TOOL ----------
-def log_interaction_tool(state):
-    text = state["text"].lower()
+# ----------- 5 LANGGRAPH TOOLS (STATE MERGING FIXED) -----------
 
-    doctor = "Unknown Doctor"
-    topic = "Unknown Topic"
-    sentiment = "Neutral"
-    follow_up = "No follow-up"
+def extract_doctor(state):
+    state["doctor"] = "Dr. Sharma"
+    return state
 
-    if "sharma" in text:
-        doctor = "Dr. Sharma"
-    if "product" in text or "x" in text:
-        topic = "Product X"
-    if "good" in text or "positive" in text:
-        sentiment = "Positive"
-    if "bad" in text or "negative" in text:
-        sentiment = "Negative"
-    if "follow" in text or "call" in text:
-        follow_up = "Call again in 2 weeks"
+def extract_topic(state):
+    state["topic"] = "Product X"
+    return state
 
+def extract_sentiment(state):
+    state["sentiment"] = "Positive"
+    return state
+
+def extract_followup(state):
+    state["follow_up"] = "Call again in 2 weeks"
+    return state
+
+def final_assembler(state):
     return {
-        "doctor": doctor,
-        "topic": topic,
-        "sentiment": sentiment,
-        "follow_up": follow_up,
-        "raw_text": state["text"]
+        "doctor": state.get("doctor"),
+        "topic": state.get("topic"),
+        "sentiment": state.get("sentiment"),
+        "follow_up": state.get("follow_up"),
+        "raw_text": state.get("text")
     }
 
+# ----------- LANGGRAPH WORKFLOW -----------
 
-# ---------- LANGGRAPH AGENT ----------
-graph = StateGraph(state_schema=dict)   # 👈 small fix here
-graph.add_node("log_interaction", log_interaction_tool)
-graph.set_entry_point("log_interaction")
+graph = StateGraph(dict)
+
+graph.add_node("extract_doctor", extract_doctor)
+graph.add_node("extract_topic", extract_topic)
+graph.add_node("extract_sentiment", extract_sentiment)
+graph.add_node("extract_followup", extract_followup)
+graph.add_node("final_assembler", final_assembler)
+
+graph.set_entry_point("extract_doctor")
+graph.add_edge("extract_doctor", "extract_topic")
+graph.add_edge("extract_topic", "extract_sentiment")
+graph.add_edge("extract_sentiment", "extract_followup")
+graph.add_edge("extract_followup", "final_assembler")
+
 agent = graph.compile()
 
-# ---------- API ----------
+# ----------- API ENDPOINT -----------
+
 @app.post("/log-interaction")
 def log_interaction(interaction: Interaction):
-    result = agent.invoke({"text": interaction.text})
+    # IMPORTANT: start state with text included
+    initial_state = {"text": interaction.text}
+    result = agent.invoke(initial_state)
     return result
